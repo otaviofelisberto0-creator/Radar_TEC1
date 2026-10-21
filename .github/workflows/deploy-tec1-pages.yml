@@ -1,0 +1,141 @@
+name: Publicar Dashboard TEC1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "index.html"
+      - ".nojekyll"
+      - "dados/manifest.json"
+      - "tools/build_release_delivery.py"
+      - ".github/workflows/deploy-tec1-pages.yml"
+  release:
+    types: [published, released]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages-tec1"
+  cancel-in-progress: false
+
+env:
+  TEC1_REPOSITORY: otaviofelisberto0-creator/Radar_TEC1
+  TEC1_COMPETENCIA: "2026-07"
+  TEC1_RELEASE_TAG: TEC1-26-07
+  TEC1_ASSET: tec1-26-07.json
+  TEC1_SOURCE_URL: https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json
+  TEC1_DELIVERY_DIR: dados/releases/TEC1-26-07
+  TEC1_DELIVERY_MANIFEST: tec1-26-07.delivery.json
+  TEC1_PART_BYTES: "8388608"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v6
+
+      - name: Validar configuração fixa da competência
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("dados/manifest.json").read_text(encoding="utf-8"))
+          item = next(x for x in manifest["arquivos"] if x.get("competencia") == "2026-07")
+          assert manifest["competenciaAtual"] == "2026-07"
+          assert item["repositorio"] == "otaviofelisberto0-creator/Radar_TEC1"
+          assert item["tag"] == "TEC1-26-07"
+          assert item["release"] == "TEC1-26-07"
+          assert item["arquivo"] == "tec1-26-07.json"
+          assert item["tipoEntrega"] == "github-pages-shards-v1"
+          assert item["url"] == "./dados/releases/TEC1-26-07/tec1-26-07.delivery.json"
+          assert item["sourceUrl"] == "https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json"
+          print("Manifesto principal validado.")
+          PY
+          if grep -Rni --exclude-dir=.git 'R-TEC1\.V2' .; then
+            echo "Referência proibida encontrada." >&2
+            exit 1
+          fi
+
+      - name: Baixar o asset oficial do Release no servidor do workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tec1-source"
+          gh release download "$TEC1_RELEASE_TAG" \
+            --repo "$TEC1_REPOSITORY" \
+            --pattern "$TEC1_ASSET" \
+            --dir "$RUNNER_TEMP/tec1-source" \
+            --clobber
+          test -s "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
+          python3 -m json.tool "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" >/dev/null
+          ls -lh "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
+          sha256sum "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
+
+      - name: Montar o site e converter o JSON grande em partes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+          tar -cf - \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./_site' \
+            --exclude='./tools' \
+            --exclude='./*.zip' \
+            --exclude='./SHA256SUMS.txt' \
+            --exclude='./dados/releases' \
+            . | tar -xf - -C _site
+          python3 tools/build_release_delivery.py \
+            --input "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
+            --output "_site/$TEC1_DELIVERY_DIR" \
+            --repository "$TEC1_REPOSITORY" \
+            --tag "$TEC1_RELEASE_TAG" \
+            --asset "$TEC1_ASSET" \
+            --competencia "$TEC1_COMPETENCIA" \
+            --source-url "$TEC1_SOURCE_URL" \
+            --manifest-name "$TEC1_DELIVERY_MANIFEST" \
+            --max-part-bytes "$TEC1_PART_BYTES"
+          touch _site/.nojekyll
+
+      - name: Validar a entrega intermediária
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_delivery.py \
+            --site _site \
+            --manifest "$TEC1_DELIVERY_DIR/$TEC1_DELIVERY_MANIFEST" \
+            --source "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
+          if find _site -type f -size +9M -print -quit | grep -q .; then
+            echo "Há arquivo de entrega maior que 9 MiB; revise a divisão." >&2
+            find _site -type f -size +9M -ls
+            exit 1
+          fi
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Enviar artefato do Pages
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Publicar no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
