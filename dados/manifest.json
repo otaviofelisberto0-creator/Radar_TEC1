@@ -1,8 +1,13 @@
-Radar_TEC1/
-├── index.html
-├── .nojekyll
-├── dados/
-│   └── manifest.json
-├── README.md
-├── PUBLICATION.md
-└── demais arquivos auxiliares
+{
+  "competenciaAtual": "2026-07",
+  "arquivos": [
+    {
+      "competencia": "2026-07",
+      "rotulo": "Julho/2026",
+      "arquivo": "tec1-26-07.json",
+      "url": "https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json",
+      "tamanhoAproximadoMB": 213,
+      "ativo": true
+    }
+  ]
+}
