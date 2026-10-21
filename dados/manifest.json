@@ -1,1 +1,8 @@
-Adicionar manifest do TEC1
+Radar_TEC1/
+├── index.html
+├── .nojekyll
+├── dados/
+│   └── manifest.json
+├── README.md
+├── PUBLICATION.md
+└── demais arquivos auxiliares
