@@ -26,7 +26,7 @@ concurrency:
 
 env:
   TEC1_REPOSITORY: otaviofelisberto0-creator/Radar_TEC1
-  TEC1_COMPETENCIA: "2026-07"
+  TEC1_RELEASE_TAG = "TEC1-26-07"
   TEC1_RELEASE_TAG: TEC1-26-07
   TEC1_ASSET: tec1-26-07.json
   TEC1_API_VERSION: "2026-03-10"
