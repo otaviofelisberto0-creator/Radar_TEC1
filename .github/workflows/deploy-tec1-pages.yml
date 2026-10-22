@@ -8,7 +8,9 @@ on:
       - "index.html"
       - ".nojekyll"
       - "dados/manifest.json"
+      - "tools/download_release_asset.py"
       - "tools/build_release_delivery.py"
+      - "tools/validate_delivery.py"
       - ".github/workflows/deploy-tec1-pages.yml"
   release:
     types: [published, released]
@@ -23,21 +25,23 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TEC1_REPOSITORY: otaviofelisberto0-creator/Radar_TEC1
   TEC1_COMPETENCIA: "2026-07"
-  TEC1_RELEASE_TAG: TEC1-26-07
-  TEC1_ASSET: tec1-26-07.json
-  TEC1_SOURCE_URL: https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json
-  TEC1_DELIVERY_DIR: dados/releases/TEC1-26-07
-  TEC1_DELIVERY_MANIFEST: tec1-26-07.delivery.json
+  TEC1_REPOSITORY: "otaviofelisberto0-creator/Radar_TEC1"
+  TEC1_RELEASE_TAG: "TEC1-26-07"
+  TEC1_ASSET: "tec1-26-07.json"
+  TEC1_API_VERSION: "2026-03-10"
+  TEC1_SOURCE_URL: "https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json"
+  TEC1_DELIVERY_DIR: "dados/releases/TEC1-26-07"
+  TEC1_DELIVERY_MANIFEST: "tec1-26-07.delivery.json"
   TEC1_PART_BYTES: "8388608"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Baixar o repositório
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Validar configuração fixa da competência
         shell: bash
@@ -45,40 +49,58 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
-          manifest = json.loads(Path("dados/manifest.json").read_text(encoding="utf-8"))
-          item = next(x for x in manifest["arquivos"] if x.get("competencia") == "2026-07")
-          assert manifest["competenciaAtual"] == "2026-07"
-          assert item["repositorio"] == "otaviofelisberto0-creator/Radar_TEC1"
-          assert item["tag"] == "TEC1-26-07"
-          assert item["release"] == "TEC1-26-07"
-          assert item["arquivo"] == "tec1-26-07.json"
-          assert item["tipoEntrega"] == "github-pages-shards-v1"
-          assert item["url"] == "./dados/releases/TEC1-26-07/tec1-26-07.delivery.json"
-          assert item["sourceUrl"] == "https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json"
+
+          manifest_path = Path("dados/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          competencia = os.environ["TEC1_COMPETENCIA"]
+          itens = [x for x in manifest.get("arquivos", []) if x.get("competencia") == competencia]
+          if len(itens) != 1:
+              raise SystemExit(f"ERRO: esperado um item para {competencia}; encontrados: {len(itens)}.")
+          item = itens[0]
+          esperado = {
+              "arquivo": os.environ["TEC1_ASSET"],
+              "repositorio": os.environ["TEC1_REPOSITORY"],
+              "tag": os.environ["TEC1_RELEASE_TAG"],
+              "release": os.environ["TEC1_RELEASE_TAG"],
+              "sourceUrl": os.environ["TEC1_SOURCE_URL"],
+              "tipoEntrega": "github-api-metadata+pages-shards-v2",
+              "url": f"./{os.environ['TEC1_DELIVERY_DIR']}/{os.environ['TEC1_DELIVERY_MANIFEST']}",
+              "ativo": True,
+          }
+          if manifest.get("competenciaAtual") != competencia:
+              raise SystemExit("ERRO: competenciaAtual divergente.")
+          divergencias = {
+              campo: {"recebido": item.get(campo), "esperado": valor}
+              for campo, valor in esperado.items()
+              if item.get(campo) != valor
+          }
+          if divergencias:
+              raise SystemExit("ERRO: configuração divergente: " + json.dumps(divergencias, ensure_ascii=False))
           print("Manifesto principal validado.")
           PY
-          if grep -Rni --exclude-dir=.git 'R-TEC1\.V2' .; then
+          if LC_ALL=C grep -RIl --exclude-dir=.git --exclude-dir=_site --binary-files=without-match -- 'R-TEC1\.V2' .; then
             echo "Referência proibida encontrada." >&2
             exit 1
           fi
 
-      - name: Baixar o asset oficial do Release no servidor do workflow
+      - name: Consultar a API oficial e baixar o asset
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/tec1-source"
-          gh release download "$TEC1_RELEASE_TAG" \
-            --repo "$TEC1_REPOSITORY" \
-            --pattern "$TEC1_ASSET" \
-            --dir "$RUNNER_TEMP/tec1-source" \
-            --clobber
+          python3 tools/download_release_asset.py \
+            --repository "$TEC1_REPOSITORY" \
+            --tag "$TEC1_RELEASE_TAG" \
+            --asset "$TEC1_ASSET" \
+            --api-version "$TEC1_API_VERSION" \
+            --output "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
+            --metadata-out "$RUNNER_TEMP/tec1-source/release-asset.json"
           test -s "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
           python3 -m json.tool "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" >/dev/null
-          ls -lh "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
-          sha256sum "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
 
       - name: Montar o site e converter o JSON grande em partes
         shell: bash
@@ -97,6 +119,7 @@ jobs:
             . | tar -xf - -C _site
           python3 tools/build_release_delivery.py \
             --input "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
+            --release-metadata "$RUNNER_TEMP/tec1-source/release-asset.json" \
             --output "_site/$TEC1_DELIVERY_DIR" \
             --repository "$TEC1_REPOSITORY" \
             --tag "$TEC1_RELEASE_TAG" \
@@ -116,7 +139,7 @@ jobs:
             --manifest "$TEC1_DELIVERY_DIR/$TEC1_DELIVERY_MANIFEST" \
             --source "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
           if find _site -type f -size +9M -print -quit | grep -q .; then
-            echo "Há arquivo de entrega maior que 9 MiB; revise a divisão." >&2
+            echo "Há arquivo de entrega maior que 9 MiB." >&2
             find _site -type f -size +9M -ls
             exit 1
           fi
@@ -135,6 +158,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 10
     steps:
       - name: Publicar no GitHub Pages
         id: deployment
