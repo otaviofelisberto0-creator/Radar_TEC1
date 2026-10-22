@@ -27,7 +27,6 @@ concurrency:
 env:
   TEC1_REPOSITORY: otaviofelisberto0-creator/Radar_TEC1
   TEC1_RELEASE_TAG = "TEC1-26-07"
-  TEC1_RELEASE_TAG = "TEC1-26-07"
   TEC1_ASSET: tec1-26-07.json
   TEC1_API_VERSION: "2026-03-10"
   TEC1_API_RELEASE_URL: https://api.github.com/repos/otaviofelisberto0-creator/Radar_TEC1/releases/tags/TEC1-26-07
