@@ -9,7 +9,7 @@
       "tag": "TEC1-26-07",
       "release": "TEC1-26-07",
       "apiVersion": "2026-03-10",
-      "apiReleaseUrl": "https://api.github.com/repos/otaviofelisberto0-creator/Radar_TEC1/releases/tags/TEC1-26-07",
+      "apiReleaseUrl": "https://api.github.com/repos/otaviofelisberto0-creator/Radar_TEC1/releases/tag/TEC1-26-07",
       "sourceUrl": "https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json",
       "tipoEntrega": "github-api-metadata+pages-shards-v2",
       "url": "./dados/releases/TEC1-26-07/tec1-26-07.delivery.json",
