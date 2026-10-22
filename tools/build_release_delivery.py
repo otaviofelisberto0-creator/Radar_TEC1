@@ -2,8 +2,10 @@ name: Publicar Dashboard TEC1
 
 on:
   workflow_dispatch:
+
   push:
-    branches: ["main"]
+    branches:
+      - main
     paths:
       - "index.html"
       - ".nojekyll"
@@ -12,8 +14,11 @@ on:
       - "tools/build_release_delivery.py"
       - "tools/validate_delivery.py"
       - ".github/workflows/deploy-tec1-pages.yml"
+
   release:
-    types: [published, released]
+    types:
+      - published
+      - released
 
 permissions:
   contents: read
@@ -21,7 +26,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages-tec1"
+  group: pages-tec1
   cancel-in-progress: false
 
 env:
@@ -56,6 +61,12 @@ jobs:
           from pathlib import Path
 
           manifest_path = Path("dados/manifest.json")
+
+          if not manifest_path.exists():
+              raise SystemExit(
+                  "ERRO: dados/manifest.json não foi encontrado."
+              )
+
           manifest = json.loads(
               manifest_path.read_text(encoding="utf-8")
           )
@@ -116,7 +127,9 @@ jobs:
                   )
               )
 
-          print("Manifesto principal e variáveis fixas validados.")
+          print(
+              "Manifesto principal e variáveis fixas validados."
+          )
           PY
 
           if LC_ALL=C grep -RIl \
@@ -144,7 +157,8 @@ jobs:
             --tag "$TEC1_RELEASE_TAG" \
             --asset "$TEC1_ASSET" \
             --api-version "$TEC1_API_VERSION" \
-            --output "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
+            --output \
+              "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
             --metadata-out \
               "$RUNNER_TEMP/tec1-source/release-asset.json"
 
@@ -156,7 +170,8 @@ jobs:
             >/dev/null
 
           python3 -m json.tool \
-            "$RUNNER_TEMP/tec1-source/release-asset.json"
+            "$RUNNER_TEMP/tec1-source/release-asset.json" \
+            >/dev/null
 
           ls -lh \
             "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
@@ -173,13 +188,13 @@ jobs:
           mkdir -p _site
 
           tar -cf - \
-            --exclude='./.git' \
-            --exclude='./.github' \
-            --exclude='./_site' \
-            --exclude='./tools' \
-            --exclude='./*.zip' \
-            --exclude='./SHA256SUMS.txt' \
-            --exclude='./dados/releases' \
+            --exclude="./.git" \
+            --exclude="./.github" \
+            --exclude="./_site" \
+            --exclude="./tools" \
+            --exclude="./*.zip" \
+            --exclude="./SHA256SUMS.txt" \
+            --exclude="./dados/releases" \
             . | tar -xf - -C _site
 
           python3 tools/build_release_delivery.py \
@@ -212,7 +227,7 @@ jobs:
           set -euo pipefail
 
           python3 tools/validate_delivery.py \
-            --site _site \
+            --site "_site" \
             --manifest \
               "$TEC1_DELIVERY_DIR/$TEC1_DELIVERY_MANIFEST" \
             --source \
@@ -221,7 +236,8 @@ jobs:
           if find _site \
             -type f \
             -size +9M \
-            -print -quit | grep -q .; then
+            -print -quit |
+            grep -q .; then
 
             echo \
               "Há arquivo de entrega maior que 9 MiB." \
@@ -235,13 +251,15 @@ jobs:
             exit 1
           fi
 
+          echo "Entrega intermediária validada."
+
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
 
       - name: Enviar artefato do Pages
         uses: actions/upload-pages-artifact@v4
         with:
-          path: _site
+          path: "_site"
 
   deploy:
     environment:
