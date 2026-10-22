@@ -1,7 +1,5 @@
 # Testes do front-end e da entrega — solução final TEC1
 
-Escopo canônico: repositório `otaviofelisberto0-creator/Radar_TEC1`, GitHub Pages `https://otaviofelisberto0-creator.github.io/Radar_TEC1/`, Release `TEC1-26-07` e asset `tec1-26-07.json`.
-
 ## Asset real de aproximadamente 213 MB
 
 O asset oficial foi reconstruído byte a byte a partir da entrega previamente validada e conferido contra os metadados da origem:
@@ -51,16 +49,6 @@ Comparação entre o `index.html` de origem e o final:
 - PASSOU — 15 tabelas declaradas antes e depois.
 - PASSOU — Página Auxiliar TEC1 preservada.
 
-## Carregamento same-origin por HTTP
-
-Teste de integração com o site final servido por HTTP local:
-
-- PASSOU — leitura de `dados/manifest.json` e seleção da competência ativa `2026-07`.
-- PASSOU — leitura do manifesto de entrega versão 2.
-- PASSOU — download e validação de 31 partes, totalizando `223.098.583` bytes.
-- PASSOU — reconstrução de 6.380 registros em `dados`, 2.288 em `tecnicos` e 129.987 em `operacional`.
-- PASSOU — presença das 13 páginas, inclusive a Página Auxiliar.
-
 ## Limite do ambiente de teste
 
-A instalação do Chromium para uma nova execução headless foi bloqueada pela política de rede do ambiente de validação. Por isso, não foi repetida aqui uma renderização visual automatizada. A sintaxe JavaScript, a lógica da API/fallback, o pipeline completo com o asset real, o carregamento same-origin por HTTP e a preservação estrutural foram validados; as páginas, análises e componentes visuais não foram reescritos.
+A instalação do Chromium para uma nova execução headless foi bloqueada pela política de rede do ambiente de validação. Por isso, não foi repetida aqui uma renderização visual automatizada. A sintaxe JavaScript, a lógica da API/fallback, o pipeline completo com o asset real e a preservação estrutural foram validados; as páginas, análises e componentes visuais não foram reescritos.

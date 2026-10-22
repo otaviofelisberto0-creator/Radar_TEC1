@@ -32,7 +32,6 @@
 - PASSOU — Python compilado com `py_compile`.
 - PASSOU — `dados/manifest.json` analisado como JSON válido.
 - PASSOU — workflow analisado como YAML válido.
-- PASSOU — etapa **Validar configuração fixa da competência** executada com as variáveis do workflow e concluída sem divergências.
 - PASSOU — scripts JavaScript inline aceitos por `node --check`.
 - PASSOU — teste unitário de download 200/302.
 - PASSOU — teste end-to-end sintético de build e validação.

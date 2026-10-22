@@ -18,7 +18,6 @@
 - A consulta do front-end é anônima e nunca expõe token.
 - Indisponibilidade de API, CORS ou rate limit não invalida a entrega same-origin já verificada; divergências reais bloqueiam o carregamento.
 - O GitHub Actions deixou de depender do comando `gh release download` e passou a usar diretamente os endpoints oficiais da API.
-- Corrigido o cabeçalho `Authorization` do downloader para usar o token automático no formato `Bearer`, restrito a `api.github.com`.
 - O downloader trata explicitamente resposta inicial HTTP `200` ou `302`.
 - Em `302`, o token não é encaminhado para a URL assinada do armazenamento.
 - Metadados oficiais do Release e do asset são incorporados ao manifesto de entrega versão 2.
