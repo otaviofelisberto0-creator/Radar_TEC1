@@ -1,276 +1,193 @@
-name: Publicar Dashboard TEC1
+#!/usr/bin/env python3
+"""Gera uma entrega TEC1 fracionada para publicação no GitHub Pages."""
+from __future__ import annotations
 
-on:
-  workflow_dispatch:
+import argparse
+import hashlib
+import json
+import sys
+from pathlib import Path
+from typing import Any
 
-  push:
-    branches:
-      - main
-    paths:
-      - "index.html"
-      - ".nojekyll"
-      - "dados/manifest.json"
-      - "tools/download_release_asset.py"
-      - "tools/build_release_delivery.py"
-      - "tools/validate_delivery.py"
-      - ".github/workflows/deploy-tec1-pages.yml"
+FORMAT = "tec1-json-shards-v1"
+VERSION = 2
 
-  release:
-    types:
-      - published
-      - released
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+def encode_json(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
-concurrency:
-  group: pages-tec1
-  cancel-in-progress: false
 
-env:
-  TEC1_COMPETENCIA: "2026-07"
-  TEC1_REPOSITORY: "otaviofelisberto0-creator/Radar_TEC1"
-  TEC1_RELEASE_TAG: "TEC1-26-07"
-  TEC1_ASSET: "tec1-26-07.json"
-  TEC1_API_VERSION: "2026-03-10"
-  TEC1_API_RELEASE_URL: "https://api.github.com/repos/otaviofelisberto0-creator/Radar_TEC1/releases/tags/TEC1-26-07"
-  TEC1_SOURCE_URL: "https://github.com/otaviofelisberto0-creator/Radar_TEC1/releases/download/TEC1-26-07/tec1-26-07.json"
-  TEC1_DELIVERY_DIR: "dados/releases/TEC1-26-07"
-  TEC1_DELIVERY_MANIFEST: "tec1-26-07.delivery.json"
-  TEC1_PART_BYTES: "8388608"
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
 
-    steps:
-      - name: Baixar o repositório
-        uses: actions/checkout@v4
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument("--input", type=Path, required=True)
+    p.add_argument("--release-metadata", type=Path, required=True)
+    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--repository", required=True)
+    p.add_argument("--tag", required=True)
+    p.add_argument("--asset", required=True)
+    p.add_argument("--competencia", required=True)
+    p.add_argument("--source-url", required=True)
+    p.add_argument("--manifest-name", required=True)
+    p.add_argument("--max-part-bytes", type=int, default=8 * 1024 * 1024)
+    return p.parse_args()
 
-      - name: Validar configuração fixa da competência
-        shell: bash
-        run: |
-          set -euo pipefail
 
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
+def split_array(rows: list[Any], max_bytes: int) -> list[tuple[list[Any], bytes]]:
+    if not rows:
+        payload = encode_json([])
+        return [([], payload)]
 
-          manifest_path = Path("dados/manifest.json")
+    parts: list[tuple[list[Any], bytes]] = []
+    current: list[Any] = []
 
-          if not manifest_path.exists():
-              raise SystemExit(
-                  "ERRO: dados/manifest.json não foi encontrado."
-              )
+    for row in rows:
+        candidate = current + [row]
+        candidate_bytes = encode_json(candidate)
+        if current and len(candidate_bytes) > max_bytes:
+            current_bytes = encode_json(current)
+            parts.append((current, current_bytes))
+            current = [row]
+            single_bytes = encode_json(current)
+            if len(single_bytes) > max_bytes:
+                raise ValueError("Um registro isolado excede o limite máximo de bytes por parte.")
+        else:
+            current = candidate
 
-          manifest = json.loads(
-              manifest_path.read_text(encoding="utf-8")
-          )
+    if current:
+        parts.append((current, encode_json(current)))
+    return parts
 
-          competencia = os.environ["TEC1_COMPETENCIA"]
 
-          itens = [
-              item
-              for item in manifest.get("arquivos", [])
-              if item.get("competencia") == competencia
-          ]
+def write_part(output: Path, section: str, index: int, payload: bytes, records: int) -> dict[str, Any]:
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in section)
+    filename = f"{safe}.part-{index:04d}.json"
+    (output / filename).write_bytes(payload)
+    return {
+        "arquivo": filename,
+        "bytes": len(payload),
+        "sha256": sha256(payload),
+        "registros": records,
+    }
 
-          if len(itens) != 1:
-              raise SystemExit(
-                  f"ERRO: esperado exatamente um item para "
-                  f"{competencia}; encontrados: {len(itens)}."
-              )
 
-          item = itens[0]
+def main() -> int:
+    args = parse_args()
+    try:
+        if args.max_part_bytes <= 0:
+            raise ValueError("--max-part-bytes deve ser maior que zero.")
+        if not args.input.is_file():
+            raise FileNotFoundError(f"Arquivo de origem não encontrado: {args.input}")
+        if not args.release_metadata.is_file():
+            raise FileNotFoundError(f"Metadados do Release não encontrados: {args.release_metadata}")
 
-          esperado = {
-              "arquivo": os.environ["TEC1_ASSET"],
-              "repositorio": os.environ["TEC1_REPOSITORY"],
-              "tag": os.environ["TEC1_RELEASE_TAG"],
-              "release": os.environ["TEC1_RELEASE_TAG"],
-              "sourceUrl": os.environ["TEC1_SOURCE_URL"],
-              "tipoEntrega": "github-pages-shards-v1",
-              "url": (
-                  f"./{os.environ['TEC1_DELIVERY_DIR']}/"
-                  f"{os.environ['TEC1_DELIVERY_MANIFEST']}"
-              ),
-              "ativo": True,
-          }
+        source_bytes = args.input.read_bytes()
+        source = json.loads(source_bytes.decode("utf-8-sig"))
+        if not isinstance(source, dict):
+            raise ValueError("O JSON mensal deve ter um objeto na raiz.")
 
-          if manifest.get("competenciaAtual") != competencia:
-              raise SystemExit(
-                  f"ERRO: competenciaAtual="
-                  f"{manifest.get('competenciaAtual')!r}; "
-                  f"esperado {competencia!r}."
-              )
+        required_arrays = ("dados", "tecnicos", "operacional")
+        for name in required_arrays:
+            if name not in source or not isinstance(source[name], list):
+                raise ValueError(f'O bloco obrigatório "{name}" deve ser uma lista.')
 
-          divergencias = {
-              campo: {
-                  "recebido": item.get(campo),
-                  "esperado": valor,
-              }
-              for campo, valor in esperado.items()
-              if item.get(campo) != valor
-          }
+        metadata = json.loads(args.release_metadata.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ValueError("Metadados do Release inválidos.")
+        if metadata.get("repository") != args.repository:
+            raise ValueError("O repositório dos metadados diverge do parâmetro informado.")
+        if metadata.get("releaseTag") != args.tag:
+            raise ValueError("A tag dos metadados diverge do parâmetro informado.")
+        if metadata.get("assetName") != args.asset:
+            raise ValueError("O asset dos metadados diverge do parâmetro informado.")
 
-          if divergencias:
-              raise SystemExit(
-                  "ERRO: configuração fixa divergente: "
-                  + json.dumps(
-                      divergencias,
-                      ensure_ascii=False,
-                      sort_keys=True,
-                  )
-              )
+        args.output.mkdir(parents=True, exist_ok=True)
+        for old in args.output.glob("*.json"):
+            old.unlink()
 
-          print(
-              "Manifesto principal e variáveis fixas validados."
-          )
-          PY
+        sections: dict[str, Any] = {}
+        total_bytes = 0
+        total_parts = 0
 
-          if LC_ALL=C grep -RIl \
-            --exclude-dir=.git \
-            --exclude-dir=_site \
-            --binary-files=without-match \
-            -- 'R-TEC1\.V2' .; then
-            echo "Referência proibida encontrada." >&2
-            exit 1
-          fi
+        for section_name, value in source.items():
+            descriptors: list[dict[str, Any]] = []
+            if isinstance(value, list):
+                chunks = split_array(value, args.max_part_bytes)
+                offset = 0
+                for number, (rows, payload) in enumerate(chunks, start=1):
+                    part = write_part(args.output, section_name, number, payload, len(rows))
+                    part["inicio"] = offset
+                    offset += len(rows)
+                    descriptors.append(part)
+                    total_bytes += len(payload)
+                    total_parts += 1
+                sections[section_name] = {
+                    "tipo": "array",
+                    "registros": len(value),
+                    "partes": descriptors,
+                }
+            else:
+                payload = encode_json(value)
+                if len(payload) > args.max_part_bytes:
+                    raise ValueError(
+                        f'A seção de valor "{section_name}" excede o limite de uma parte.'
+                    )
+                part = write_part(args.output, section_name, 1, payload, 1)
+                descriptors.append(part)
+                total_bytes += len(payload)
+                total_parts += 1
+                sections[section_name] = {
+                    "tipo": "valor",
+                    "registros": 1,
+                    "partes": descriptors,
+                }
 
-          echo "Nenhuma referência legada encontrada."
+        delivery = {
+            "formato": FORMAT,
+            "versao": VERSION,
+            "competencia": args.competencia,
+            "origem": {
+                "repositorio": args.repository,
+                "tag": args.tag,
+                "asset": args.asset,
+                "url": args.source_url,
+                "apiVersion": metadata.get("apiVersion"),
+                "apiReleaseUrl": metadata.get("releaseApiUrl"),
+                "apiAssetUrl": metadata.get("assetApiUrl"),
+                "assetId": metadata.get("assetId"),
+                "assetDigest": metadata.get("assetDigest"),
+                "downloadStatusInicial": metadata.get("downloadInitialStatus"),
+                "bytes": len(source_bytes),
+                "sha256": sha256(source_bytes),
+            },
+            "secoes": sections,
+            "entrega": {
+                "totalPartes": total_parts,
+                "totalBytes": total_bytes,
+                "maxPartBytes": args.max_part_bytes,
+            },
+        }
 
-      - name: Consultar a API oficial e baixar o asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        manifest_path = args.output / args.manifest_name
+        manifest_path.write_text(
+            json.dumps(delivery, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(json.dumps({
+            "status": "ok",
+            "manifesto": str(manifest_path),
+            "secoes": len(sections),
+            "partes": total_parts,
+            "bytes": total_bytes,
+        }, ensure_ascii=False))
+        return 0
+    except Exception as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
 
-          mkdir -p "$RUNNER_TEMP/tec1-source"
 
-          python3 tools/download_release_asset.py \
-            --repository "$TEC1_REPOSITORY" \
-            --tag "$TEC1_RELEASE_TAG" \
-            --asset "$TEC1_ASSET" \
-            --api-version "$TEC1_API_VERSION" \
-            --output \
-              "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
-            --metadata-out \
-              "$RUNNER_TEMP/tec1-source/release-asset.json"
-
-          test -s \
-            "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
-
-          python3 -m json.tool \
-            "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
-            >/dev/null
-
-          python3 -m json.tool \
-            "$RUNNER_TEMP/tec1-source/release-asset.json" \
-            >/dev/null
-
-          ls -lh \
-            "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
-
-          sha256sum \
-            "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
-
-      - name: Montar o site e converter o JSON grande em partes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf _site
-          mkdir -p _site
-
-          tar -cf - \
-            --exclude="./.git" \
-            --exclude="./.github" \
-            --exclude="./_site" \
-            --exclude="./tools" \
-            --exclude="./*.zip" \
-            --exclude="./SHA256SUMS.txt" \
-            --exclude="./dados/releases" \
-            . | tar -xf - -C _site
-
-          python3 tools/build_release_delivery.py \
-            --input \
-              "$RUNNER_TEMP/tec1-source/$TEC1_ASSET" \
-            --release-metadata \
-              "$RUNNER_TEMP/tec1-source/release-asset.json" \
-            --output \
-              "_site/$TEC1_DELIVERY_DIR" \
-            --repository \
-              "$TEC1_REPOSITORY" \
-            --tag \
-              "$TEC1_RELEASE_TAG" \
-            --asset \
-              "$TEC1_ASSET" \
-            --competencia \
-              "$TEC1_COMPETENCIA" \
-            --source-url \
-              "$TEC1_SOURCE_URL" \
-            --manifest-name \
-              "$TEC1_DELIVERY_MANIFEST" \
-            --max-part-bytes \
-              "$TEC1_PART_BYTES"
-
-          touch _site/.nojekyll
-
-      - name: Validar a entrega intermediária
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 tools/validate_delivery.py \
-            --site "_site" \
-            --manifest \
-              "$TEC1_DELIVERY_DIR/$TEC1_DELIVERY_MANIFEST" \
-            --source \
-              "$RUNNER_TEMP/tec1-source/$TEC1_ASSET"
-
-          if find _site \
-            -type f \
-            -size +9M \
-            -print -quit |
-            grep -q .; then
-
-            echo \
-              "Há arquivo de entrega maior que 9 MiB." \
-              >&2
-
-            find _site \
-              -type f \
-              -size +9M \
-              -ls
-
-            exit 1
-          fi
-
-          echo "Entrega intermediária validada."
-
-      - name: Configurar GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Enviar artefato do Pages
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: "_site"
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    runs-on: ubuntu-latest
-    needs: build
-    timeout-minutes: 10
-
-    steps:
-      - name: Publicar no GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+if __name__ == "__main__":
+    raise SystemExit(main())
