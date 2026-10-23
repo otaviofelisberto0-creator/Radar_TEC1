@@ -1,0 +1,101 @@
+name: Publicar Dashboard TEC1
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  GITHUB_API_VERSION: "2022-11-28"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v4
+
+      - name: Preparar o site e baixar o arquivo único da Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+          rsync -a --exclude='.git/' --exclude='.github/' --exclude='_site/' ./ _site/
+
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          manifest_path = Path('_site/dados/manifest.json')
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          ativos = [x for x in manifest.get('arquivos', []) if x.get('ativo', True)]
+          if not ativos:
+              raise SystemExit('Nenhuma competência ativa no manifest.json.')
+
+          for item in ativos:
+              repo = item['repositorio']
+              tag = item['tag']
+              asset_name = item['arquivo']
+              api_version = item.get('apiVersion', '2022-11-28')
+              rel = subprocess.run(
+                  ['gh','api','--header',f'X-GitHub-Api-Version: {api_version}',
+                   f'repos/{repo}/releases/tags/{tag}'],
+                  check=True, capture_output=True, text=True
+              )
+              release = json.loads(rel.stdout)
+              assets = [a for a in release.get('assets', []) if a.get('name') == asset_name]
+              if len(assets) != 1:
+                  raise SystemExit(f'Esperado 1 asset {asset_name}; encontrados {len(assets)}.')
+              asset = assets[0]
+              if asset.get('state') != 'uploaded':
+                  raise SystemExit(f'Asset {asset_name} não está uploaded.')
+
+              tag_dir = Path('_site/dados/releases') / tag
+              tag_dir.mkdir(parents=True, exist_ok=True)
+              raw = Path('/tmp') / asset_name
+              gz = tag_dir / f'{asset_name}.gz'
+
+              with raw.open('wb') as out:
+                  subprocess.run(
+                      ['gh','api','--header','Accept: application/octet-stream',
+                       '--header',f'X-GitHub-Api-Version: {api_version}',asset['url']],
+                      check=True, stdout=out
+                  )
+
+              with raw.open('rb') as f:
+                  first = f.read(1)
+              if first not in (b'{', b'['):
+                  raise SystemExit(f'{asset_name} não parece ser JSON.')
+
+              subprocess.run(['python3','-m','json.tool',str(raw)], check=True,
+                             stdout=subprocess.DEVNULL)
+              subprocess.run(['gzip','-9','-c',str(raw)], check=True, stdout=gz.open('wb'))
+              print(f'Publicado: {gz} ({gz.stat().st_size} bytes compactados)')
+              raw.unlink(missing_ok=True)
+          PY
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Enviar artefato do site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Publicar no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
